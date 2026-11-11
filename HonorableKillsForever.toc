@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: Honorable Kills
+## Title-frFR: Victoires honorables
+## Notes: Shows your honorable kills (total, today, yesterday) on the PvP window.
+## Notes-frFR: Affiche vos victoires honorables (total, aujourd'hui, hier) sur la fenêtre JcJ.
+## Version: 2.0.1
+## Category: PvP
+## Category-frFR: JcJ
+## IconTexture: Interface\Icons\INV_BannerPVP_02
+## SavedVariables: HonorableKillsForeverDB
+
+HonorableKillsForever.lua
