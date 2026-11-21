@@ -3,7 +3,7 @@
 ## Title-frFR: Victoires honorables
 ## Notes: Shows your honorable kills (total, today, yesterday) on the PvP window.
 ## Notes-frFR: Affiche vos victoires honorables (total, aujourd'hui, hier) sur la fenêtre JcJ.
-## Version: 2.0.1
+## Version: 2.0.2
 ## Category: PvP
 ## Category-frFR: JcJ
 ## IconTexture: Interface\Icons\INV_BannerPVP_02

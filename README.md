@@ -32,6 +32,7 @@ Honorable Kills Forever is a World of Warcraft add-on made for **World of Warcra
 The game doesn't provide an account-wide count, so the add-on saves each character's total when that character logs in, and adds them up.
 
 - A character is counted once it has logged in with the add-on installed. Log in each of your characters once to complete the total.
+- Characters are recognized by their full name: first name and surname. Two characters can share a first name.
 - If you delete a character, remove it from the total with `/hk forget <Name>`.
 
 ## Installation
@@ -48,6 +49,9 @@ Open the PvP tab of your character window. If it still doesn't show, type `/hk`:
 
 **The account total looks too low.**
 Characters are only counted after they log in once with the add-on. Log in each of them once.
+
+**A character is listed twice, or with a name like "CAMWOW EU5 Realm 8 PvP".**
+That name is an internal server name. The game gave it to add-ons as a realm name until the 20 November 2026 hotfix, and gives none since. Version 2.0.1 then saved the character a second time and counted it twice. Since version 2.0.2, both entries are merged the next time that character logs in.
 
 **Does the add-on send my data anywhere?**
 No. Everything stays on your computer, in the add-on's saved variables file. Add-ons cannot access the internet.

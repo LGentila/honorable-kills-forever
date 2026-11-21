@@ -112,6 +112,7 @@ local ROWS = {
 }
 
 local db
+local loggedIn = false
 local characterKey, characterInfo
 local currentParent, currentParentName
 local hookedFrames = {}
@@ -186,20 +187,106 @@ end
 ---------------------------------------------------------------------------
 -- Account-wide total
 ---------------------------------------------------------------------------
+-- Characters are saved under "Name-Realm". WoW Forever has no realms:
+-- since its 2026-11-20 hotfix, GetRealmName() returns "" there. Its
+-- characters have a first name and a surname instead, and UnitName()
+-- returns the surname where other clients return the realm. A full name
+-- is unique in a region, so Forever characters are saved under
+-- "Name Surname".
+local function MakeKey(info)
+    if info.surname then
+        return info.name .. " " .. info.surname
+    elseif info.realm ~= "" then
+        return info.name .. "-" .. info.realm
+    end
+    return info.name
+end
+
+-- True when a saved entry is the current character under an older key:
+-- saved with the realm WoW Forever returned before the hotfix, or without
+-- the surname (up to version 2.0.1). What is missing on either side is not
+-- compared.
+local function IsCurrentCharacter(entry)
+    local info = characterInfo
+    if entry.name ~= info.name then
+        return false
+    end
+    if entry.class and info.class and entry.class ~= info.class then
+        return false
+    end
+    if entry.surname and info.surname then
+        return entry.surname == info.surname
+    end
+    if entry.surname or info.surname then
+        return true -- WoW Forever: the realm means nothing there
+    end
+    local realm = entry.realm or ""
+    return realm == "" or info.realm == "" or realm == info.realm
+end
+
+local function StoreCharacter(kills)
+    local entry = db.characters[characterKey] or {}
+    entry.name, entry.surname = characterInfo.name, characterInfo.surname
+    entry.realm, entry.class = characterInfo.realm, characterInfo.class
+    entry.kills = kills
+    db.characters[characterKey] = entry
+end
+
+-- Merges the current character's older entries into its entry, keeping the
+-- highest count: a lifetime count never goes down.
+local function MergeOldEntries()
+    local current = db.characters[characterKey]
+    local kills = current and tonumber(current.kills)
+    local merged = false
+    for key, entry in pairs(db.characters) do
+        if key ~= characterKey and IsCurrentCharacter(entry) then
+            local count = tonumber(entry.kills)
+            if count and (not kills or count > kills) then
+                kills = count
+            end
+            db.characters[key] = nil -- clearing fields is allowed during pairs()
+            merged = true
+        end
+    end
+    if merged and kills then
+        StoreCharacter(kills)
+    end
+end
+
 local function InitCharacter()
-    local name = UnitName and UnitName("player")
-    if not name then
+    if not UnitName then
         return
     end
-    local realm = (GetRealmName and GetRealmName()) or ""
+    local name, surname = UnitName("player")
+    -- Hidden or not loaded yet: SaveCharacter() tries again later.
+    if IsSecret(name) or IsSecret(surname) or not name or name == ""
+        or name == UNKNOWNOBJECT then
+        return
+    end
+    if surname == "" then
+        surname = nil
+    end
+    local realm = GetRealmName and GetRealmName()
+    if not IsUsable(realm) then
+        realm = ""
+    end
     local _, class = UnitClass("player")
-    characterKey = name .. "-" .. realm
-    characterInfo = { name = name, realm = realm, class = class }
+    if not IsUsable(class) then
+        class = nil
+    end
+    characterInfo = { name = name, surname = surname, realm = realm, class = class }
+    characterKey = MakeKey(characterInfo)
+    if db then
+        MergeOldEntries()
+    end
 end
 
 -- Saves the current character's lifetime kills. A 0 never overwrites a
 -- saved positive count, in case the server data is not loaded yet.
 local function SaveCharacter(lifetime)
+    if not characterKey and loggedIn then
+        InitCharacter() -- the name could not be read at login
+    end
     if not (db and characterKey and IsUsable(lifetime)) then
         return
     end
@@ -211,10 +298,7 @@ local function SaveCharacter(lifetime)
     if entry and lifetime == 0 and (entry.kills or 0) > 0 then
         return
     end
-    entry = entry or {}
-    entry.name, entry.realm, entry.class = characterInfo.name, characterInfo.realm, characterInfo.class
-    entry.kills = lifetime
-    db.characters[characterKey] = entry
+    StoreCharacter(lifetime)
 end
 
 -- Sum of every saved character, optionally leaving one out.
@@ -401,13 +485,25 @@ panel:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(L.CHARACTERS, 1, 1, 1)
     local characters = GetSortedCharacters()
+    -- Characters are shown by first name. The surname is added when several
+    -- share a first name, and the realm, on clients that still have realms,
+    -- for characters of another realm.
+    local firstNames = {}
+    for _, item in ipairs(characters) do
+        local name = item.entry.name or item.key
+        firstNames[name] = (firstNames[name] or 0) + 1
+    end
+    local showRealms = characterInfo and not characterInfo.surname and characterInfo.realm ~= ""
     for i, item in ipairs(characters) do
         if i > MAX_TOOLTIP_CHARACTERS then
             break
         end
         local entry = item.entry
         local name = entry.name or item.key
-        if characterInfo and entry.realm and entry.realm ~= characterInfo.realm then
+        if entry.surname and firstNames[name] > 1 then
+            name = name .. " " .. entry.surname
+        end
+        if showRealms and entry.realm and entry.realm ~= "" and entry.realm ~= characterInfo.realm then
             name = name .. "-" .. entry.realm
         end
         local r, g, b = GetClassColor(entry.class)
@@ -565,6 +661,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
         Attach()
     elseif event == "PLAYER_LOGIN" then
         InitDB()
+        loggedIn = true
         InitCharacter()
         UpdateIcon()
         WatchForTarget()
