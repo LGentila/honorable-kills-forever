@@ -18,7 +18,7 @@ Honorable Kills Forever is a World of Warcraft add-on made for **World of Warcra
 
 ## Options
 
-Press Esc, click **Options**, open the **AddOns** tab and select **Honorable Kills**. You can also right-click the panel or the counter.
+Press Esc, click **Options**, open the **AddOns** tab and select **Honorable Kills Forever**. You can also right-click the panel or the counter.
 
 **On-screen counter**
 
@@ -35,7 +35,10 @@ Press Esc, click **Options**, open the **AddOns** tab and select **Honorable Kil
 
 **Characters on this account**
 
-The characters counted in the account total. If you delete a character, click **Remove** next to it, then **Confirm?**. The character you are playing can't be removed.
+The characters counted in the account total.
+
+- **Ignore**: for a character that never fights, a bank character for example. It leaves the list and the account total, and stays out even when it logs in. To track it again, tick **Show ignored characters** below the list, then click **Track** next to it.
+- **Remove**: for a deleted character. Click **Remove**, then **Confirm?**. If the character logs in again, it is counted again. The character you are playing can't be removed, but it can be ignored.
 
 Changes apply right away, to all your characters.
 
@@ -46,6 +49,7 @@ The game doesn't provide an account-wide count, so the add-on saves each charact
 - A character is counted once it has logged in with the add-on installed. Log in each of your characters once to complete the total.
 - Characters are recognized by their full name: first name and surname. Two characters can share a first name.
 - If you delete a character, remove it from the total in the options.
+- To leave out a character that never fights, such as a bank character, ignore it in the options.
 
 ## Installation
 
@@ -64,6 +68,9 @@ In the options, tick **Show the counter on the screen**. If you still can't see 
 
 **How do I move the counter?**
 In the options, uncheck **Lock position**, drag the counter, then close the options.
+
+**How do I hide a bank character?**
+Open the options from any character and click **Ignore** next to the bank character. It no longer appears in the list or in the account total, even when it logs in.
 
 **The account total looks too low.**
 Characters are only counted after they log in once with the add-on. Log in each of them once.

@@ -8,6 +8,7 @@
 -- everywhere else.
 
 local ADDON_NAME = ...
+local ADDON_TITLE = "Honorable Kills Forever" -- the add-on's name, the same in every language
 
 ---------------------------------------------------------------------------
 -- Localization
@@ -38,11 +39,20 @@ local L = {
     LOCK           = "Lock position",
     LOCK_TIP       = "Uncheck to move the counter with the mouse. It locks again when you close the options.",
     RESET_POSITION = "Reset position",
-    CHARACTERS_TIP = "Deleted a character? Remove it here so that it no longer counts in the account total.",
+    CHARACTERS_TIP = "Remove a deleted character. Ignore a character that never fights, a bank character for example: it is no longer shown or counted, even when it logs in.",
+    IGNORE         = "Ignore",
+    IGNORE_TIP     = "No longer track this character: it leaves the list and the account total, even when it logs in.",
+    TRACK          = "Track",
+    TRACK_TIP      = "Track this character again: its kills count again in the account total.",
     REMOVE         = "Remove",
+    REMOVE_TIP     = "Erase this character's saved kills. If it logs in again, it is counted again.",
+    REMOVE_CURRENT = "The character you are playing can't be removed: it would be saved again right away. You can ignore it instead.",
     CONFIRM        = "Confirm?",
     CURRENT        = "(this character)",
+    IGNORED        = "(ignored)",
+    SHOW_IGNORED   = "Show ignored characters (%d)",
     NO_CHARACTERS  = "No character saved yet.",
+    ALL_IGNORED    = "All characters are ignored.",
     -- Chat messages
     SHOWN_ON       = "Shown on: %s",
     NOT_FOUND      = "PvP window not detected yet. Open it once, or use /hk attach <FrameName>.",
@@ -95,11 +105,20 @@ if GetLocale() == "frFR" then
         LOCK           = "Verrouiller la position",
         LOCK_TIP       = "Décochez pour déplacer le compteur avec la souris. Il se reverrouille quand vous fermez les options.",
         RESET_POSITION = "Réinitialiser la position",
-        CHARACTERS_TIP = "Vous avez supprimé un personnage ? Retirez-le ici pour qu'il ne compte plus dans le total du compte.",
+        CHARACTERS_TIP = "Retirez un personnage supprimé. Ignorez un personnage qui ne fait jamais de JcJ, un personnage banque par exemple : il n'est plus affiché ni compté, même quand il se connecte.",
+        IGNORE         = "Ignorer",
+        IGNORE_TIP     = "Ne plus suivre ce personnage : il quitte la liste et le total du compte, même quand il se connecte.",
+        TRACK          = "Suivre",
+        TRACK_TIP      = "Suivre à nouveau ce personnage : ses victoires comptent de nouveau dans le total du compte.",
         REMOVE         = "Retirer",
+        REMOVE_TIP     = "Efface les victoires enregistrées de ce personnage. S'il se reconnecte, il est de nouveau compté.",
+        REMOVE_CURRENT = "Le personnage connecté ne peut pas être retiré : il serait aussitôt enregistré à nouveau. Vous pouvez l'ignorer à la place.",
         CONFIRM        = "Confirmer ?",
         CURRENT        = "(ce personnage)",
+        IGNORED        = "(ignoré)",
+        SHOW_IGNORED   = "Afficher les personnages ignorés (%d)",
         NO_CHARACTERS  = "Aucun personnage enregistré pour l'instant.",
+        ALL_IGNORED    = "Tous les personnages sont ignorés.",
         SHOWN_ON       = "Affiché sur : %s",
         NOT_FOUND      = "Fenêtre JcJ pas encore détectée. Ouvrez-la une fois, ou utilisez /hk attach <NomDuCadre>.",
         RESET_DONE     = "Positions réinitialisées.",
@@ -366,6 +385,14 @@ local function StoreCharacter(kills)
     return entry
 end
 
+-- Ignored characters, a bank character for example, are no longer tracked:
+-- their entry stops being updated, and they are left out of the character
+-- lists and of the account total.
+local function IsIgnored(key)
+    local entry = db and key and db.characters[key]
+    return entry and entry.ignored and true or false
+end
+
 -- Adds the days of an older entry, keeping the highest count of each day.
 local function MergeDays(into, days)
     if type(days) ~= "table" then
@@ -387,6 +414,7 @@ local function MergeOldEntries()
     local current = db.characters[characterKey]
     local kills = current and tonumber(current.kills)
     local days = current and current.days
+    local ignored = current and current.ignored
     local merged = false
     for key, entry in pairs(db.characters) do
         if key ~= characterKey and IsCurrentCharacter(entry) then
@@ -395,12 +423,14 @@ local function MergeOldEntries()
                 kills = count
             end
             days = MergeDays(days, entry.days)
+            ignored = ignored or entry.ignored
             db.characters[key] = nil -- clearing fields is allowed during pairs()
             merged = true
         end
     end
     if merged then
-        StoreCharacter(kills).days = days
+        local entry = StoreCharacter(kills)
+        entry.days, entry.ignored = days, ignored or nil
     end
 end
 
@@ -446,32 +476,42 @@ local function SaveCharacter(lifetime)
         return
     end
     local entry = db.characters[characterKey]
+    if entry and entry.ignored then
+        return
+    end
     if entry and lifetime == 0 and (entry.kills or 0) > 0 then
         return
     end
     StoreCharacter(lifetime)
 end
 
--- Sum of every saved character, optionally leaving one out.
+-- Sum of every tracked character, optionally leaving one out.
 local function GetAccountTotal(excludedKey)
     if not db then
         return nil
     end
     local total = 0
     for key, entry in pairs(db.characters) do
-        if key ~= excludedKey then
+        if key ~= excludedKey and not entry.ignored then
             total = total + (tonumber(entry.kills) or 0)
         end
     end
     return total
 end
 
-local function GetSortedCharacters()
+-- Tracked characters, highest count first, then the ignored ones if asked.
+local function GetSortedCharacters(includeIgnored)
     local list = {}
     for key, entry in pairs(db.characters) do
-        table.insert(list, { key = key, entry = entry })
+        if includeIgnored or not entry.ignored then
+            table.insert(list, { key = key, entry = entry })
+        end
     end
     table.sort(list, function(a, b)
+        local ia, ib = a.entry.ignored and 1 or 0, b.entry.ignored and 1 or 0
+        if ia ~= ib then
+            return ia < ib
+        end
         local ka, kb = a.entry.kills or 0, b.entry.kills or 0
         if ka ~= kb then
             return ka > kb
@@ -582,7 +622,7 @@ end
 -- it was played without the add-on, or when the game closed before saving.
 local function SaveDays(today, yesterday)
     local entry = db and characterKey and db.characters[characterKey]
-    if not entry then
+    if not entry or entry.ignored then
         return
     end
     if type(entry.days) ~= "table" then
@@ -620,7 +660,7 @@ local function CollectStats()
     if testKills and not IsSecret(s.lifetime) then
         -- Display only: the real count stays saved for the account total.
         s.lifetime = testKills
-        s.account = (GetAccountTotal(characterKey) or 0) + testKills
+        s.account = (GetAccountTotal(characterKey) or 0) + (IsIgnored(characterKey) and 0 or testKills)
     end
     return s
 end
@@ -1021,14 +1061,14 @@ counter:SetScript("OnDragStop", StopScreenDrag)
 -- In the game's options, AddOns tab. Every change applies right away.
 local OPTIONS_WIDTH   = 600
 local INDENT          = 44 -- settings that depend on the box above them
-local LIST_SIZE       = 8  -- characters shown at once
+local LIST_SIZE       = 7  -- characters shown at once
 local LIST_ROW_HEIGHT = 22
-local LIST_WIDTH      = 450
+local LIST_WIDTH      = 530
 
 local options = CreateFrame("Frame", "HonorableKillsForeverOptions", UIParent)
 options:SetSize(OPTIONS_WIDTH, 540)
 options:Hide()
-options.name = L.TITLE -- the panel's name in the classic options window
+options.name = ADDON_TITLE -- the panel's name in the classic options window
 local category -- the panel's category in the modern options window
 
 local function PlayCheckSound(checked)
@@ -1038,15 +1078,32 @@ local function PlayCheckSound(checked)
     end
 end
 
+-- Tooltips of the options' widgets. Hooked rather than set, so that the
+-- templates keep their own scripts; the fields have names of their own for
+-- the same reason.
 local function ShowWidgetTooltip(self)
+    if not self.tipText then
+        return
+    end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText(self.tooltipTitle, 1, 1, 1)
-    GameTooltip:AddLine(self.tooltipText, nil, nil, nil, true)
+    GameTooltip:SetText(self.tipTitle, 1, 1, 1)
+    GameTooltip:AddLine(self.tipText, nil, nil, nil, true)
     GameTooltip:Show()
 end
 
 local function HideTooltip()
     GameTooltip:Hide()
+end
+
+local function AddWidgetTooltip(widget)
+    widget:HookScript("OnEnter", ShowWidgetTooltip)
+    widget:HookScript("OnLeave", HideTooltip)
+end
+
+-- Clicking the label ticks the box too.
+local function SetCheckLabel(check, text)
+    check.label:SetText(text)
+    check:SetHitRectInsets(0, -(check.label:GetStringWidth() + 4), 0, 0)
 end
 
 local function CreateCheckbox(text, tooltip, onClick)
@@ -1060,18 +1117,15 @@ local function CreateCheckbox(text, tooltip, onClick)
     end
     check.label = check:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     check.label:SetPoint("LEFT", check, "RIGHT", 2, 1)
-    check.label:SetText(text)
-    -- Clicking the label ticks the box too.
-    check:SetHitRectInsets(0, -(check.label:GetStringWidth() + 4), 0, 0)
+    SetCheckLabel(check, text)
     check:SetScript("OnClick", function(self)
         local checked = self:GetChecked() and true or false
         PlayCheckSound(checked)
         onClick(checked)
     end)
     if tooltip then
-        check.tooltipTitle, check.tooltipText = text, tooltip
-        check:SetScript("OnEnter", ShowWidgetTooltip)
-        check:SetScript("OnLeave", HideTooltip)
+        check.tipTitle, check.tipText = text, tooltip
+        AddWidgetTooltip(check)
     end
     return check
 end
@@ -1117,7 +1171,7 @@ end
 
 local title = options:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
 title:SetPoint("TOPLEFT", options, "TOPLEFT", 16, -16)
-title:SetText(L.TITLE)
+title:SetText(ADDON_TITLE)
 
 local version = SafeCall(C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata,
     ADDON_NAME, "Version")
@@ -1178,7 +1232,8 @@ local pvpNote = options:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
 pvpNote:SetPoint("TOPLEFT", options, "TOPLEFT", INDENT, -270)
 pvpNote:SetText(L.PVP_NOTE)
 
--- Characters on this account, to remove the deleted ones from the total.
+-- Characters on this account: the deleted ones can be removed, and the ones
+-- that never fight ignored.
 CreateHeader(L.CHARACTERS, -300)
 
 local charactersTip = options:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -1189,11 +1244,12 @@ charactersTip:SetText(L.CHARACTERS_TIP)
 
 local list = CreateFrame("Frame", nil, options)
 list:SetSize(LIST_WIDTH, LIST_SIZE * LIST_ROW_HEIGHT)
-list:SetPoint("TOPLEFT", options, "TOPLEFT", 16, -340)
+list:SetPoint("TOPLEFT", options, "TOPLEFT", 16, -350) -- below the two lines of help
 list:EnableMouseWheel(true)
 
 local listRows = {}
 local listOffset = 0
+local showIgnored = false -- ignored characters are listed only on demand
 -- A character is removed on the second click of its button: the first one
 -- asks for confirmation, for a few seconds.
 local pendingRemoval, removalToken = nil, 0
@@ -1234,6 +1290,27 @@ local function OnRemoveClick(button)
     RefreshCharacterList()
 end
 
+local function OnIgnoreClick(button)
+    local key = button:GetParent().key
+    local entry = key and db.characters[key]
+    if not entry then
+        return
+    end
+    entry.ignored = not entry.ignored or nil
+    pendingRemoval = nil
+    Update()
+    RefreshCharacterList()
+end
+
+local function CreateRowButton(row, x, onClick)
+    local button = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    button:SetSize(96, 20)
+    button:SetPoint("LEFT", row, "LEFT", x, 0)
+    button:SetScript("OnClick", onClick)
+    AddWidgetTooltip(button)
+    return button
+end
+
 for i = 1, LIST_SIZE do
     local row = CreateFrame("Frame", nil, list)
     row:SetSize(LIST_WIDTH, LIST_ROW_HEIGHT)
@@ -1245,18 +1322,20 @@ for i = 1, LIST_SIZE do
     end
     row.name = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
     row.name:SetPoint("LEFT", row, "LEFT", 6, 0)
-    row.name:SetWidth(250)
+    row.name:SetWidth(240)
     row.name:SetJustifyH("LEFT")
     if row.name.SetWordWrap then
         row.name:SetWordWrap(false)
     end
     row.kills = row:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
-    row.kills:SetPoint("RIGHT", row, "LEFT", 330, 0)
+    row.kills:SetPoint("RIGHT", row, "LEFT", 316, 0)
     row.kills:SetJustifyH("RIGHT")
-    row.remove = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    row.remove:SetSize(100, 20)
-    row.remove:SetPoint("LEFT", row, "LEFT", 344, 0)
-    row.remove:SetScript("OnClick", OnRemoveClick)
+    row.ignore = CreateRowButton(row, 326, OnIgnoreClick)
+    row.remove = CreateRowButton(row, 428, OnRemoveClick)
+    -- Its tooltip explains why it is disabled for the current character.
+    if row.remove.SetMotionScriptsWhileDisabled then
+        row.remove:SetMotionScriptsWhileDisabled(true)
+    end
     listRows[i] = row
 end
 
@@ -1287,25 +1366,54 @@ local emptyText = list:CreateFontString(nil, "ARTWORK", "GameFontDisable")
 emptyText:SetPoint("TOPLEFT", list, "TOPLEFT", 6, -4)
 emptyText:SetText(L.NO_CHARACTERS)
 
+local showIgnoredCheck = CreateCheckbox(L.SHOW_IGNORED:format(0), nil, function(checked)
+    showIgnored = checked
+    RefreshCharacterList()
+end)
+showIgnoredCheck:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -508)
+
 RefreshCharacterList = function()
-    local items = db and GetSortedCharacters() or {}
+    local saved, ignored = 0, 0
+    if db then
+        for _, entry in pairs(db.characters) do
+            saved = saved + 1
+            if entry.ignored then
+                ignored = ignored + 1
+            end
+        end
+    end
+    local items = db and GetSortedCharacters(showIgnored) or {}
     local maxOffset = math.max(0, #items - LIST_SIZE)
     listOffset = math.max(0, math.min(listOffset, maxOffset))
     for i, row in ipairs(listRows) do
         local item = items[listOffset + i]
         row.key = item and item.key
         if item then
-            -- The character being played cannot be removed: it would be
-            -- saved again right away.
+            local entry = item.entry
+            -- The character being played cannot be removed, as it would be
+            -- saved again right away, but it can be ignored.
             local isCurrent = item.key == characterKey
             local name = GetCharacterName(item, nil, true)
+            local label = name
             if isCurrent then
-                name = name .. " |cff999999" .. L.CURRENT .. "|r"
+                label = label .. " |cff999999" .. L.CURRENT .. "|r"
             end
-            row.name:SetText(name)
-            row.name:SetTextColor(GetClassColor(item.entry.class))
-            row.kills:SetText(FormatNumber(item.entry.kills))
+            if entry.ignored then
+                label = label .. " |cff999999" .. L.IGNORED .. "|r"
+                row.name:SetTextColor(0.5, 0.5, 0.5)
+                row.kills:SetTextColor(0.5, 0.5, 0.5)
+            else
+                row.name:SetTextColor(GetClassColor(entry.class))
+                row.kills:SetTextColor(1, 1, 1)
+            end
+            row.name:SetText(label)
+            row.kills:SetText(FormatNumber(entry.kills))
+            row.ignore:SetText(entry.ignored and L.TRACK or L.IGNORE)
+            row.ignore.tipTitle = name
+            row.ignore.tipText = entry.ignored and L.TRACK_TIP or L.IGNORE_TIP
             row.remove:SetText(item.key == pendingRemoval and L.CONFIRM or L.REMOVE)
+            row.remove.tipTitle = name
+            row.remove.tipText = isCurrent and L.REMOVE_CURRENT or L.REMOVE_TIP
             SetEnabled(row.remove, not isCurrent)
             row:Show()
         else
@@ -1317,7 +1425,10 @@ RefreshCharacterList = function()
     SetShown(scrollDown, scrollable)
     SetEnabled(scrollUp, listOffset > 0)
     SetEnabled(scrollDown, listOffset < maxOffset)
+    emptyText:SetText(saved == 0 and L.NO_CHARACTERS or L.ALL_IGNORED)
     SetShown(emptyText, #items == 0)
+    SetCheckLabel(showIgnoredCheck, L.SHOW_IGNORED:format(ignored))
+    showIgnoredCheck:SetChecked(showIgnored)
 end
 
 RefreshOptions = function()
@@ -1365,9 +1476,11 @@ options:SetScript("OnShow", function()
     RefreshOptions()
 end)
 
--- Closing the options, or opening another page of them, locks the counter.
+-- Closing the options, or opening another page of them, locks the counter
+-- and hides the ignored characters again.
 options:SetScript("OnHide", function()
     pendingRemoval = nil
+    showIgnored = false
     if screenUnlocked then
         SetScreenUnlocked(false)
     end
@@ -1379,7 +1492,7 @@ options.default, options.OnDefault = ResetDisplaySettings, ResetDisplaySettings
 
 local function RegisterOptions()
     if Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory then
-        category = Settings.RegisterCanvasLayoutCategory(options, L.TITLE)
+        category = Settings.RegisterCanvasLayoutCategory(options, ADDON_TITLE)
         Settings.RegisterAddOnCategory(category)
     elseif InterfaceOptions_AddCategory then
         InterfaceOptions_AddCategory(options)
